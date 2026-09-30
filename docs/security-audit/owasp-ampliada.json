@@ -1,0 +1,1061 @@
+{
+  "project": "Escolha Certa",
+  "date": "30/09/2026",
+  "findings": [
+    {
+      "id": "OW-01",
+      "severity": "média",
+      "category": "A07 - Authentication Failures",
+      "title": "Login limita por IP, sem orçamento por conta compartilhado",
+      "evidence": [
+        {
+          "file": "src/main/java/br/com/escolhacerta/security/RateLimitFilter.java",
+          "start": 17,
+          "end": 17,
+          "snippet": "17:     private final Map<String, Window> windows = new HashMap<>();"
+        },
+        {
+          "file": "src/main/java/br/com/escolhacerta/security/RateLimitFilter.java",
+          "start": 40,
+          "end": 47,
+          "snippet": "40:         if (\"POST\".equals(req.getMethod())) {\n41:             if (path.equals(\"/login\")) category = \"login\";\n42:             else if (path.equals(\"/orcamento\") || path.equals(\"/sou-cuidador\")\n43:                      || path.equals(\"/contato\") || path.startsWith(\"/formularios/\")) category = \"public-forms\";\n44:             else if (path.equals(\"/admin/account\")) category = \"account\";\n45:             else if (path.equals(\"/admin/media\")) { category = \"upload\"; limit = 5; }\n46:         }\n47:         if (category != null && !allowed(req.getRemoteAddr() + \":\" + category, limit)) {"
+        },
+        {
+          "file": "src/main/java/br/com/escolhacerta/security/SecurityConfig.java",
+          "start": 59,
+          "end": 62,
+          "snippet": "59:             .formLogin(login -> login\n60:                 .loginPage(\"/login\")\n61:                 .defaultSuccessUrl(\"/admin\", true)\n62:                 .permitAll())"
+        }
+      ],
+      "description": "A única chave de quota contém getRemoteAddr e categoria. O username não participa do contador, e o HashMap é privado de cada instância. Trocar de IP ou de instância renova a quota para a mesma conta. Não foi identificado controle adicional de tentativas por conta.",
+      "condition": "Exige login acessível e múltiplos IPs, múltiplas instâncias ou reinício para exceder a quota local. Comprometer a conta ainda depende de acertar sua senha. Não demonstra login sem credenciais e não presume ataque já ocorrido.",
+      "impact": "Permite ampliar tentativas contra um administrador além das 10/minuto por IP; cada senha existente avaliada consome BCrypt custo 12. Facilita guessing e credential stuffing.",
+      "validation": "Código original de RateLimitFilter compilado contra stubs: mesma chave bloqueia a 11a tentativa; segundo IP e segunda instância recebem nova quota. Nenhuma autenticação real executada.",
+      "fix": "Manter quota por IP e adicionar controle por conta normalizada, compartilhado entre instâncias, com janela e backoff. Evitar bloqueio permanente que permita DoS da conta. Acrescentar MFA no CMS como defesa adicional.",
+      "acceptance": [
+        "A mesma conta continua limitada ao alternar IPs e instâncias.",
+        "A quota por IP permanece e o e-mail não é armazenado sem necessidade em logs.",
+        "O bloqueio tem recuperação e TTL definidos; não permite bloqueio permanente malicioso.",
+        "Teste de integração valida limites usando login real com CSRF."
+      ]
+    },
+    {
+      "id": "OW-02",
+      "severity": "média",
+      "category": "A07 - Authentication Failures",
+      "title": "Política aceita senhas administrativas previsíveis",
+      "evidence": [
+        {
+          "file": "src/main/java/br/com/escolhacerta/config/AdminBootstrap.java",
+          "start": 21,
+          "end": 27,
+          "snippet": "21:     public void run(ApplicationArguments args) {\n22:         if(repo.count()==0) {\n23:             if(!email.matches(\"[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+\")||password.length()<12||password.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>72)throw new IllegalStateException(\"Configure ADMIN_EMAIL e ADMIN_PASSWORD com pelo menos 12 caracteres\");\n24:             AdminUser user=new AdminUser();\n25:             user.setEmail(email.toLowerCase());\n26:             user.setPasswordHash(encoder.encode(password));\n27:             repo.save(user);"
+        },
+        {
+          "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+          "start": 176,
+          "end": 183,
+          "snippet": "176:     @PostMapping(\"/account\") public String password(@RequestParam String currentPassword,@RequestParam String newPassword,@RequestParam String confirmPassword,java.security.Principal principal,Model m,RedirectAttributes flash,jakarta.servlet.http.HttpServletRequest request) {\n177:         AdminUser user=users.findByEmail(principal.getName()).orElseThrow();\n178:         if(!encoder.matches(currentPassword,user.getPasswordHash())||newPassword.length()<12||newPassword.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>72||!newPassword.equals(confirmPassword)) {\n179:             m.addAttribute(\"error\",\"Verifique a senha atual e use uma nova senha entre 12 e 72 caracteres, com confirmação igual.\");\n180:             return \"admin/account\";\n181:         }\n182:         user.setPasswordHash(encoder.encode(newPassword));\n183:         users.save(user);"
+        }
+      ],
+      "description": "Bootstrap e troca verificam comprimento mínimo 12 e limite 72 bytes, sem bloqueio de senhas comuns/comprometidas. A configuração contém somente autenticação por senha. As condições aceitam aaaaaaaaaaaa e 123456789012.",
+      "condition": "Só afeta uma conta se o operador escolher senha fraca; o script init gera senha aleatória forte. A troca exige administrador autenticado, senha atual correta e confirmação. Não há prova de que a senha real seja fraca.",
+      "impact": "A política permite que uma credencial administrativa seja facilmente adivinhável, reduzindo a proteção contra tentativas automatizadas.",
+      "validation": "Predicados extraídos literalmente das condições Java foram executados com Java 17. Ambos aceitaram os exemplos previsíveis. A troca completa e o bootstrap com banco não foram executados.",
+      "fix": "Usar serviço único de política em bootstrap/troca, mínimo de 15 caracteres para login sem MFA e lista de senhas comuns/comprometidas. Preservar limite de 72 bytes do BCrypt, aceitar passphrases e Unicode sem exigir composição artificial. Não enviar senhas em texto a serviços de verificação.",
+      "acceptance": [
+        "Bootstrap e troca rejeitam os dois exemplos e senhas da blocklist.",
+        "A mesma política é aplicada nos dois fluxos, com mensagens coerentes.",
+        "Senhas fortes e passphrases dentro do limite de bytes são aceitas.",
+        "Nenhuma senha ou hash é registrado em logs."
+      ]
+    },
+    {
+      "id": "OW-03",
+      "severity": "média",
+      "category": "A06 - Insecure Design / exaustão de recursos",
+      "title": "Leituras públicas carregam coleções sem limite e não têm quota de GET",
+      "evidence": [
+        {
+          "file": "src/main/java/br/com/escolhacerta/controller/PublicController.java",
+          "start": 22,
+          "end": 25,
+          "snippet": "22:     @GetMapping(\"/\") public String home(Model m) {\n23:         m.addAttribute(\"services\",content.published(ContentKind.SERVICE));\n24:         m.addAttribute(\"posts\",content.published(ContentKind.POST).stream().limit(3).toList());\n25:         m.addAttribute(\"testimonials\",content.published(ContentKind.TESTIMONIAL));"
+        },
+        {
+          "file": "src/main/java/br/com/escolhacerta/service/ContentService.java",
+          "start": 17,
+          "end": 18,
+          "snippet": "17:     public java.util.List<Content> published(ContentKind kind) {\n18:         return repo.findByKindAndPublishedTrueOrderBySortOrderAscCreatedAtDesc(kind);"
+        },
+        {
+          "file": "src/main/java/br/com/escolhacerta/repository/ContentRepository.java",
+          "start": 6,
+          "end": 8,
+          "snippet": "6: public interface ContentRepository extends JpaRepository<Content,Long> {\n7:     java.util.List<Content> findByKindAndPublishedTrueOrderBySortOrderAscCreatedAtDesc(ContentKind kind);\n8:     java.util.List<Content> findByKindOrderBySortOrderAscCreatedAtDesc(ContentKind kind);"
+        },
+        {
+          "file": "src/main/java/br/com/escolhacerta/controller/GlobalViewAdvice.java",
+          "start": 14,
+          "end": 18,
+          "snippet": "14:     @ModelAttribute(\"site\") public SiteSettings site() {\n15:         return settings.findById(1L).orElse(new SiteSettings());\n16:     }\n17:     @ModelAttribute(\"publicForms\") public java.util.List<CustomForm> forms() {\n18:         return forms.findByPublishedTrueOrderByIdDesc();"
+        },
+        {
+          "file": "src/main/java/br/com/escolhacerta/security/RateLimitFilter.java",
+          "start": 40,
+          "end": 52,
+          "snippet": "40:         if (\"POST\".equals(req.getMethod())) {\n41:             if (path.equals(\"/login\")) category = \"login\";\n42:             else if (path.equals(\"/orcamento\") || path.equals(\"/sou-cuidador\")\n43:                      || path.equals(\"/contato\") || path.startsWith(\"/formularios/\")) category = \"public-forms\";\n44:             else if (path.equals(\"/admin/account\")) category = \"account\";\n45:             else if (path.equals(\"/admin/media\")) { category = \"upload\"; limit = 5; }\n46:         }\n47:         if (category != null && !allowed(req.getRemoteAddr() + \":\" + category, limit)) {\n48:             res.setHeader(\"Retry-After\", \"60\");\n49:             res.sendError(429);\n50:             return;\n51:         }\n52:         chain.doFilter(req, res);"
+        }
+      ],
+      "description": "A consulta published retorna List com todas as entidades, incluindo body. Na home, limit(3) é aplicado em stream depois da consulta, portanto não limita o SQL. O advice consulta os formulários publicados integralmente em cada handler MVC. O filtro só classifica POST e deixa os GET públicos sem quota. Não há cache de dados/resultado no código. Cache de templates não é cache dessas queries.",
+      "condition": "Visitantes podem repetir GET sem autenticação ou CSRF. A amplificação cresce conforme o acervo publicado e a concorrência. Saturação real, RPS suportado e indisponibilidade não foram medidos. Cache/WAF externo pode mitigar, mas não foi auditado.",
+      "impact": "Trabalho de banco e alocação por requisição aumentam com o acervo; tráfego abusivo pode degradar CPU/RAM/latência em hospedagem pequena. Este é risco de DoS na camada de aplicação, não prova de proteção ou vulnerabilidade a DDoS volumétrico.",
+      "validation": "Leitura integral dos fluxos e assinatura dos repositories comprova ausência de paginação/limite SQL. O filtro original deixou 100 GET /blog seguirem a cadeia sem bloqueio em teste isolado. Não houve teste de carga ou SQL real.",
+      "fix": "Paginar listas públicas; buscar apenas os três posts da home no banco, usando projeção sem body; limitar e cachear o menu de formulários com invalidação no CMS. Definir orçamento de GET no ingresso e na aplicação, preservando health e assets.",
+      "acceptance": [
+        "A consulta da home tem limite no banco e não carrega o corpo de todos os posts.",
+        "Listagens possuem tamanho máximo por página e não retornam todo o acervo.",
+        "Advice usa lista limitada/cacheada com invalidação ao publicar ou editar.",
+        "Teste em staging mede latência/RAM com acervo representativo e limites de GET."
+      ]
+    },
+    {
+      "id": "OW-04",
+      "severity": "baixa",
+      "category": "A09 - Security Logging and Alerting Failures",
+      "title": "Logs de mutações não identificam o administrador",
+      "evidence": [
+        {
+          "file": "src/main/java/br/com/escolhacerta/service/ContentService.java",
+          "start": 41,
+          "end": 47,
+          "snippet": "41:         Content saved=repo.save(c);\n42:         log.info(\"content_saved id={} kind={} published={}\",saved.getId(),kind,saved.getPublished());\n43:         return saved;\n44:     }\n45:     public void delete(long id) {\n46:         repo.delete(get(id));\n47:         log.info(\"content_deleted id={}\",id);"
+        },
+        {
+          "file": "src/main/java/br/com/escolhacerta/service/LeadService.java",
+          "start": 34,
+          "end": 40,
+          "snippet": "34:     public void status(long id,LeadStatus status) {\n35:         get(id).setStatus(status);\n36:         log.info(\"lead_status_changed id={} status={}\",id,status);\n37:     }\n38:     public void delete(long id) {\n39:         repo.delete(get(id));\n40:         log.info(\"lead_deleted id={}\",id);"
+        },
+        {
+          "file": "src/main/java/br/com/escolhacerta/service/FormService.java",
+          "start": 49,
+          "end": 50,
+          "snippet": "49:         CustomForm saved=repo.save(f);\n50:         log.info(\"form_saved id={} published={}\",saved.getId(),saved.getPublished());"
+        },
+        {
+          "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+          "start": 182,
+          "end": 193,
+          "snippet": "182:         user.setPasswordHash(encoder.encode(newPassword));\n183:         users.save(user);\n184:         for (Object authenticated : sessions.getAllPrincipals()) {\n185:             if (authenticated instanceof org.springframework.security.core.userdetails.UserDetails details\n186:                 && details.getUsername().equals(user.getEmail())) {\n187:                 sessions.getAllSessions(authenticated, false).forEach(info -> info.expireNow());\n188:             }\n189:         }\n190:         var currentSession = request.getSession(false);\n191:         if (currentSession != null) currentSession.invalidate();\n192:         org.springframework.security.core.context.SecurityContextHolder.clearContext();\n193:         return \"redirect:/login?passwordChanged\";"
+        }
+      ],
+      "description": "Eventos content_saved/content_deleted, lead_status_changed/lead_deleted e form_saved registram IDs e atributos, mas não o principal responsável. Troca de senha salva e invalida sessões sem evento explícito da aplicação. Não foi encontrado contexto MDC ou mecanismo de auditoria que adicione o autor.",
+      "condition": "Uma ação administrativa ocorre; a investigação usa os logs entregues pelo aplicativo. Logs adicionais de proxy, IAM ou SIEM podem existir na implantação e não foram inspecionados. O achado não afirma que não exista nenhum log na plataforma.",
+      "impact": "A trilha da aplicação não permite atribuir com segurança mutações à conta responsável; dificulta investigar uso indevido de uma sessão ou mudança de senha.",
+      "validation": "Busca em todo src/main e rastreamento dos pontos de log e da troca de senha. Sem evidência de execução ou coleta real de logs.",
+      "fix": "Adicionar auditoria estruturada com ID da conta, ação, objeto, horário, resultado e correlation ID; registrar mudança de senha sem valor da senha/hash. Monitorar falhas de autenticação e eventos relevantes com proteção contra log flooding e dados pessoais desnecessários.",
+      "acceptance": [
+        "Mutações registram ator autenticado e objeto, com correlation ID.",
+        "Alteração de senha emite evento sem senha, hash ou token.",
+        "Os eventos ficam disponíveis para revisão com retenção e acesso definidos.",
+        "Teste confirma autor correto e ausência de segredos nos logs."
+      ]
+    }
+  ],
+  "matrix": [
+    [
+      "A01 - Broken Access Control",
+      "Sem falha nova verificada",
+      "31 handlers/37 padrões revistos. ADMIN no servidor (SecurityConfig:55). DTOs + mapeamento explícito impedem atribuir role/id/status em LeadService:15-26. Leituras públicas por ID exigem publicação; senha usa Principal. Sem multi-tenant."
+    ],
+    [
+      "A02 - Security Misconfiguration",
+      "Controles presentes; implantação pendente",
+      "Actuator só health sem detalhes; container UID 10001; MySQL interno no Compose padrão. Prod exige cookie Secure, mas proxy precisa limpar headers Forwarded/X-Forwarded-* e impedir acesso direto. DB_URL pode conter TLS inadequado; configuração real não recebida."
+    ],
+    [
+      "A03 - Software Supply Chain Failures",
+      "Cobertura incompleta",
+      "pom.xml e Dockerfile revistos. Parent Boot e SDK S3 fixados; imagens com tags mutáveis e sem digest/SBOM. Não foi resolvida a árvore Maven, rodado scanner CVE nem inspecionado JAR. Isso é pendência, não CVE atribuída sem evidência."
+    ],
+    [
+      "A04 - Cryptographic Failures",
+      "Sem falha nova verificada no código",
+      "BCrypt custo 12; init usa fonte criptográfica; segredo inicial externo. TLS de banco/HTTPS/secret manager e backups só podem ser confirmados na nuvem."
+    ],
+    [
+      "A05 - Injection",
+      "Sem sink perigoso encontrado",
+      "JPA derivado sem SQL concatenado. Não há execução de shell pelo servidor, XML recebido, eval, th:utext ou innerHTML. URLs de imagem restritas; textos escapados. Scripts locais são ferramentas do operador, não endpoints."
+    ],
+    [
+      "A06 - Insecure Design",
+      "OW-03 (média)",
+      "Ausência de orçamento de GET e consultas públicas sem limite. DDoS volumétrico exige rede/CDN/provedor; o filtro da aplicação não o resolve sozinho."
+    ],
+    [
+      "A07 - Authentication Failures",
+      "OW-01 e OW-02 (médias)",
+      "Controle por IP/instância sem conta e política aceita senha previsível. Sessão renovada ao autenticar; troca confere senha atual e expira sessões. MFA ausente, registrado como defesa adicional."
+    ],
+    [
+      "A08 - Software or Data Integrity Failures",
+      "Sem falha nova verificada; release pendente",
+      "Jackson usa tipo explícito List<FieldDefinition>, sem default typing ou Java deserialization. Nomes/tipos/opções validados. Integridade/proveniência do artefato final ainda não verificada."
+    ],
+    [
+      "A09 - Security Logging and Alerting Failures",
+      "OW-04 (baixa)",
+      "Logs de mutações não incluem ator; troca de senha sem evento explícito. Alertas e retenção da nuvem não recebidos."
+    ],
+    [
+      "A10 - Mishandling of Exceptional Conditions",
+      "Sem bypass verificado; testes dinâmicos pendentes",
+      "Erros de formulário retornam view; objetos inexistentes/publicação inválida devolvem 404; upload acima do máximo tem 413. Stacktrace não é incluída na resposta. Falha S3/I/O pode virar 500 genérico: comportamento operacional a testar, sem retorno indevido demonstrado."
+    ]
+  ],
+  "controls": [
+    [
+      "Mass assignment",
+      "src/main/java/br/com/escolhacerta/controller/PublicController.java:71,91; dto/LeadForm.java:5-12; service/LeadService.java:15-26",
+      "Formulários recebem DTO, não entidade. ID/status/kind do lead não são escolhidos pelo navegador. Serviços criam Lead novo e copiam campos permitidos. DTOs do CMS contêm apenas atributos autorizados a ADMIN."
+    ],
+    [
+      "IDOR e acesso",
+      "src/main/java/br/com/escolhacerta/security/SecurityConfig.java:55; service/ContentService.java:26-29; controller/PublicController.java:86-92; controller/AdminController.java:176-178",
+      "Todos os handlers por ID foram rastreados. ADMIN global; publicados para visitantes; conta escolhida pelo Principal."
+    ],
+    [
+      "CSRF",
+      "src/main/java/br/com/escolhacerta/security/SecurityConfig.java:51-73; src/main/resources/templates/fragments/layout.html:5; src/test/java/br/com/escolhacerta/ApplicationFlowTest.java:45-47",
+      "CSRF padrão mantido, sem disable/exceções. POSTs usam th:action e logout é POST. Teste MockMvc de token ausente existe, mas não foi executado."
+    ],
+    [
+      "Path traversal e upload",
+      "src/main/java/br/com/escolhacerta/storage/LocalMediaStorage.java:13-18; service/UploadService.java:13-29; config/WebConfig.java:10-11",
+      "Nome local é UUID; extensão vem de formato validado. Não usa original filename. Imagem é decodificada e regravada. Leitura pública de /media depende também da contenção de caminhos do handler Spring; testes HTTP com ../ e formas codificadas pendentes."
+    ],
+    [
+      "XSS",
+      "src/main/resources/templates/post.html:1; templates/admin/lead-detail.html:1; static/js/site.js:11-15; src/main/java/br/com/escolhacerta/dto/ContentForm.java:9",
+      "Saída escapada e APIs DOM de texto; sem HTML/Markdown arbitrário. CSP script-src self sem unsafe-inline. javascript: em imagem é rejeitado no DTO."
+    ],
+    [
+      "SSRF",
+      "src/main/java/br/com/escolhacerta/storage/S3MediaStorage.java:14-25; dto/ContentForm.java:9",
+      "Não há fetch servidor de URL recebida do visitante/usuário. imageUrl é carregada pelo navegador. Endpoint S3 vem de ambiente administrado, não de requisição pública."
+    ],
+    [
+      "Sessão",
+      "src/main/java/br/com/escolhacerta/security/SecurityConfig.java:63-66; controller/AdminController.java:184-192; src/main/resources/application.yml:43-46; application-prod.yml:8-11",
+      "Migra sessão ao autenticar, uma sessão por conta, cookie HttpOnly/SameSite e Secure em prod; troca de senha expira sessões conhecidas. Funcionalidade completa ainda precisa do teste real."
+    ],
+    [
+      "Validação e consumo",
+      "src/main/java/br/com/escolhacerta/service/FormService.java:25-39,52-76; dto/FieldDefinition.java:5; src/main/resources/application.yml:23-25,31-37",
+      "Até 20 perguntas; nomes reservados bloqueados; opções/select e respostas validados. Upload e requisição limitados; quota de POST existente. Não equivale a garantia contra DoS."
+    ]
+  ],
+  "routes": [
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/PublicController.java",
+      "line": 22,
+      "method": "GET",
+      "paths": [
+        "/"
+      ],
+      "handler": "home",
+      "control": "ContentService.java:17-18: consulta somente published=true."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/PublicController.java",
+      "line": 28,
+      "method": "GET",
+      "paths": [
+        "/servicos",
+        "/blog",
+        "/depoimentos"
+      ],
+      "handler": "listing",
+      "control": "ContentService.java:17-18: consulta somente published=true."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/PublicController.java",
+      "line": 39,
+      "method": "GET",
+      "paths": [
+        "/blog/{id}"
+      ],
+      "handler": "post",
+      "control": "ContentService.java:26-29: published=true e kind=POST; caso contrário 404."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/PublicController.java",
+      "line": 43,
+      "method": "GET",
+      "paths": [
+        "/sobre"
+      ],
+      "handler": "about",
+      "control": "Página pública; não retorna registros privados."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/PublicController.java",
+      "line": 46,
+      "method": "GET",
+      "paths": [
+        "/privacidade"
+      ],
+      "handler": "privacy",
+      "control": "Página pública; não retorna registros privados."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/PublicController.java",
+      "line": 49,
+      "method": "GET",
+      "paths": [
+        "/login"
+      ],
+      "handler": "login",
+      "control": "Página pública; não retorna registros privados."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/PublicController.java",
+      "line": 60,
+      "method": "GET",
+      "paths": [
+        "/orcamento",
+        "/sou-cuidador",
+        "/contato"
+      ],
+      "handler": "form",
+      "control": "Página pública; não retorna registros privados."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/PublicController.java",
+      "line": 68,
+      "method": "POST",
+      "paths": [
+        "/orcamento",
+        "/sou-cuidador",
+        "/contato"
+      ],
+      "handler": "submit",
+      "control": "Entrada pública @Valid LeadForm; cria registro novo; sem ID de lead fornecido."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/PublicController.java",
+      "line": 78,
+      "method": "GET",
+      "paths": [
+        "/formularios/{id}"
+      ],
+      "handler": "custom",
+      "control": "PublicController.java:86-89: exige published=true. POST apenas cria lead; não altera formulário."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/PublicController.java",
+      "line": 91,
+      "method": "POST",
+      "paths": [
+        "/formularios/{id}"
+      ],
+      "handler": "customSubmit",
+      "control": "PublicController.java:86-89: exige published=true. POST apenas cria lead; não altera formulário."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 38,
+      "method": "GET",
+      "paths": [
+        "/admin"
+      ],
+      "handler": "dashboard",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 45,
+      "method": "GET",
+      "paths": [
+        "/admin/contents/{kind}"
+      ],
+      "handler": "contents",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 50,
+      "method": "GET",
+      "paths": [
+        "/admin/contents/{kind}/new"
+      ],
+      "handler": "contentNew",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 55,
+      "method": "GET",
+      "paths": [
+        "/admin/contents/{kind}/{id}/edit"
+      ],
+      "handler": "contentEdit",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa. Verificação de kind (Controller:57/79; Service:33)."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 70,
+      "method": "POST",
+      "paths": [
+        "/admin/contents/{kind}/save"
+      ],
+      "handler": "contentSave",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa. Verificação de kind (Controller:57/79; Service:33)."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 78,
+      "method": "POST",
+      "paths": [
+        "/admin/contents/{kind}/{id}/delete"
+      ],
+      "handler": "contentDelete",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa. Verificação de kind (Controller:57/79; Service:33)."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 83,
+      "method": "GET",
+      "paths": [
+        "/admin/leads"
+      ],
+      "handler": "inbox",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 89,
+      "method": "GET",
+      "paths": [
+        "/admin/leads/{id}"
+      ],
+      "handler": "lead",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 93,
+      "method": "POST",
+      "paths": [
+        "/admin/leads/{id}/status"
+      ],
+      "handler": "status",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 97,
+      "method": "POST",
+      "paths": [
+        "/admin/leads/{id}/delete"
+      ],
+      "handler": "deleteLead",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 101,
+      "method": "GET",
+      "paths": [
+        "/admin/forms"
+      ],
+      "handler": "forms",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 105,
+      "method": "GET",
+      "paths": [
+        "/admin/forms/new"
+      ],
+      "handler": "formNew",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 111,
+      "method": "GET",
+      "paths": [
+        "/admin/forms/{id}/edit"
+      ],
+      "handler": "formEdit",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 122,
+      "method": "POST",
+      "paths": [
+        "/admin/forms/save"
+      ],
+      "handler": "formSave",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 134,
+      "method": "POST",
+      "paths": [
+        "/admin/forms/{id}/delete"
+      ],
+      "handler": "formDelete",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 138,
+      "method": "GET",
+      "paths": [
+        "/admin/settings"
+      ],
+      "handler": "settings",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 149,
+      "method": "POST",
+      "paths": [
+        "/admin/settings"
+      ],
+      "handler": "settingsSave",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 161,
+      "method": "GET",
+      "paths": [
+        "/admin/media"
+      ],
+      "handler": "media",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 164,
+      "method": "POST",
+      "paths": [
+        "/admin/media"
+      ],
+      "handler": "upload",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 173,
+      "method": "GET",
+      "paths": [
+        "/admin/account"
+      ],
+      "handler": "account",
+      "control": "ADMIN no servidor (SecurityConfig.java:55); escopo global da empresa."
+    },
+    {
+      "file": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "line": 176,
+      "method": "POST",
+      "paths": [
+        "/admin/account"
+      ],
+      "handler": "password",
+      "control": "ADMIN; conta obtida do Principal, senha atual conferida (176-178); invalida sessões (184-192)."
+    }
+  ],
+  "snapshot_files": [
+    {
+      "path": ".dockerignore",
+      "lines": 6,
+      "sha256": "a9e321012d71e0f44a5663e8db9cdb96fc545feb06d3fb089e49ebedaa7d6b61"
+    },
+    {
+      "path": ".env.example",
+      "lines": 21,
+      "sha256": "8b1d498a73acd36a709dd245150fef05d65e44d585180b0326e24f6a6c4f610a"
+    },
+    {
+      "path": ".gitignore",
+      "lines": 9,
+      "sha256": "36dfc7b6d70f591385eec3123fd5421876d7771efa41f401503a57928680dcee"
+    },
+    {
+      "path": "Dockerfile",
+      "lines": 17,
+      "sha256": "1bf08509c190aef37a420be15f033b1950aefec584c2b42ec02371a8e213705d"
+    },
+    {
+      "path": "README.md",
+      "lines": 149,
+      "sha256": "7d17b54a86385b4ea7cb503b1ff16986db4283eb1e3c236a1a9ad01353d53005"
+    },
+    {
+      "path": "docker-compose.local.yml",
+      "lines": 5,
+      "sha256": "124c6d80bd3e874192614e27fdfd6edc29c7a6f87c11a5066fc13d5b0c6014e4"
+    },
+    {
+      "path": "docker-compose.yml",
+      "lines": 39,
+      "sha256": "9973cf69b52d6e0e6261d7e134977f338810426f8207f5526a399747ae21e494"
+    },
+    {
+      "path": "docs/DEPLOY.md",
+      "lines": 52,
+      "sha256": "a4d930d4e4042db69425079131ceda64565199eee5b5bb1b33d053aaaba04810"
+    },
+    {
+      "path": "docs/REFERENCES.md",
+      "lines": 9,
+      "sha256": "a09a2f968bc60cca6828e07565ad2b9c504816a2f92e1d8f98260f07cb80b379"
+    },
+    {
+      "path": "docs/SECURITY_REVIEW.md",
+      "lines": 59,
+      "sha256": "256350d6787724f8a8fa96247edc14b625711e9111b51b3a9d213f7a287fc0b0"
+    },
+    {
+      "path": "docs/UPDATE.md",
+      "lines": 40,
+      "sha256": "32104640a1c5bb0250dc8e6eb1cd4a6e66d04556d215425f421581c21932267d"
+    },
+    {
+      "path": "docs/VALIDATION.md",
+      "lines": 53,
+      "sha256": "4b9479af0b8157a2ae2fbd197f7ef5bfba6ece999132351ed841eea9cb7b8885"
+    },
+    {
+      "path": "pom.xml",
+      "lines": 19,
+      "sha256": "944c7f8cfc096cb8ebb4577bc0ae531707437efada9e4e67348241bbbb421dc4"
+    },
+    {
+      "path": "scripts/init.ps1",
+      "lines": 14,
+      "sha256": "7349a2dff00b9ec351c4c9b4a03afedb56a73202c5d142c1592a436f8458297e"
+    },
+    {
+      "path": "scripts/init.sh",
+      "lines": 13,
+      "sha256": "e99e948b245c77f5714f2514875964db685b9c41b2221b71a84179260a2b3999"
+    },
+    {
+      "path": "scripts/run-local.ps1",
+      "lines": 7,
+      "sha256": "7c16a536d33aabb2fa771b25e84f5d3b4dd7f102c3991c18c1c50c115896fef3"
+    },
+    {
+      "path": "scripts/run-local.sh",
+      "lines": 9,
+      "sha256": "81e56ab5e3c716293f387c40d82e3207be895849f1c3b91f0e867dd10d0743fe"
+    },
+    {
+      "path": "scripts/smoke.py",
+      "lines": 36,
+      "sha256": "b68ae970686936c2d33d6c877682e3cc85688c5d70a0198aac6f24c3a8bc67aa"
+    },
+    {
+      "path": "scripts/start.ps1",
+      "lines": 6,
+      "sha256": "2ce97b5d820b01a6e09ca48f1a71231b5f2eb8dbe9cc2b7c50f5d2d987f7c6b7"
+    },
+    {
+      "path": "scripts/start.sh",
+      "lines": 6,
+      "sha256": "bc123ebbab0d200889564c75199860d44a065297afe79df9aa16ef5fefee74ef"
+    },
+    {
+      "path": "scripts/test.sh",
+      "lines": 4,
+      "sha256": "b955fdef246912eada4a784e2afb90b262637aa69be2655990298a1b64052854"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/EscolhaCertaApplication.java",
+      "lines": 10,
+      "sha256": "bf0c3720b24abb61bdbd32de0a5971b004a3d984da87524521fe0d8ddf1d79cf"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/config/AdminBootstrap.java",
+      "lines": 30,
+      "sha256": "3e3c7a2d85ddd1513c2c63a5e4cf577617390b27b6adfcd77d2de4fdbec780cd"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/config/WebConfig.java",
+      "lines": 13,
+      "sha256": "9d840bc36f60dc72b33204cd3db46029e95fef89d0f384f188f317618a2ec090"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/controller/AdminController.java",
+      "lines": 195,
+      "sha256": "c09a6298d6cf31f80ba4cd8d07cd59ae6db507d7c90215e8d4943c9100b43cc0"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/controller/ErrorAdvice.java",
+      "lines": 12,
+      "sha256": "132922600cd10a08f22a43976bf1be5244bda8804aa02f45c16d0d682394ecda"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/controller/GlobalViewAdvice.java",
+      "lines": 20,
+      "sha256": "9d89c53a2f54485887e8d5f57bf6f11e66b4ce8ef50e4aabac7b7dfcf4fe9961"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/controller/PublicController.java",
+      "lines": 108,
+      "sha256": "b006262f53f0659d5b3152434da8ca0b8448a7c733505559401ee84f8ccdd23a"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/dto/ContentForm.java",
+      "lines": 48,
+      "sha256": "1ba559fe72289bb26efb943b0fb18de9a745466fb746b722fbf22d3542ccc75a"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/dto/CustomFormDto.java",
+      "lines": 34,
+      "sha256": "659c3c0fc69745e64f4dda6c575503515a99e498054a27fbcd8022bc7d8fbef4"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/dto/FieldDefinition.java",
+      "lines": 6,
+      "sha256": "5808970e5b101e35a69f6b4b3fbfa0ec1b64d5704825c2a0f7f6ccfca1fb2ced"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/dto/LeadForm.java",
+      "lines": 55,
+      "sha256": "bdc7f496f24b54b798bdf1026d9efce871890734ef2064db1ff1c276b02b8080"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/dto/SettingsForm.java",
+      "lines": 41,
+      "sha256": "779f0d4b05249065aa7fc9b87021ce4c3802e81188b2f08c9fcc848f588abfdd"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/model/AdminUser.java",
+      "lines": 28,
+      "sha256": "37247eb00de278077e90455a1771c4ddac8b1c942d6933d441486c9afe75f498"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/model/Content.java",
+      "lines": 70,
+      "sha256": "5a79a413227e119bd5aed90d53e5b1dc5763c8c9fe349848ae3213d67e853aba"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/model/ContentKind.java",
+      "lines": 5,
+      "sha256": "94725551c772c5988b1c1626bc8ccedf2b824e10eaeaf89a62d33b7c7ad6d7c1"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/model/CustomForm.java",
+      "lines": 42,
+      "sha256": "11a7953b2e01f3d998d5a7c06188b1b0a536ca815dab5a10f6399bdd226012c9"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/model/Lead.java",
+      "lines": 91,
+      "sha256": "524980b57fc9148c03cdc1c9b5287fe70142007e78316cb0b72f729448e2e229"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/model/LeadKind.java",
+      "lines": 5,
+      "sha256": "644653770c057a7208dd5e05204d188be7b5ae85aa14c56fad5f95c586ffc9d6"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/model/LeadStatus.java",
+      "lines": 5,
+      "sha256": "8e3e086bfcf3b9f6453a488a5f5cc3f5f2a4c40420a6783015688c55d6b1b825"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/model/SiteSettings.java",
+      "lines": 49,
+      "sha256": "a8d041592f71d44dc4ec6102dc04e8ddecc5d04ceb0bdcd3396cc1a9e3909565"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/repository/AdminUserRepository.java",
+      "lines": 8,
+      "sha256": "c6156c7177ab48ffb94f53be6a2610cc9a34a3413a6caaa0ff3fbf9b6633fff6"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/repository/ContentRepository.java",
+      "lines": 9,
+      "sha256": "b77477e1587877d432a63fc962fe77113a740ed2240e8f705cfe586fa83fbb0c"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/repository/CustomFormRepository.java",
+      "lines": 8,
+      "sha256": "64571c8e080b1711c5cf43034baf3125b1cfae7d0e3f75ee9c87bafea55236d9"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/repository/LeadRepository.java",
+      "lines": 9,
+      "sha256": "3aa5681ea29a2db10b8db020bfc066854474b94a4bf5bde3b4bba9366ed1f97d"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/repository/SiteSettingsRepository.java",
+      "lines": 7,
+      "sha256": "c8871e6ea844f75b3ffeffcc1a7b255157c7ba06b6c3d517c779fb01f2326624"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/security/RateLimitFilter.java",
+      "lines": 54,
+      "sha256": "d2331cb29597612329084014416541947b6fc7be75e5681e72fef952e910bc30"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/security/SecurityConfig.java",
+      "lines": 75,
+      "sha256": "b6ec90f4f2d5d142762afce7bbb2fb485be62af3c1155cf10d1b8c1176e83c6c"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/service/ContentService.java",
+      "lines": 49,
+      "sha256": "c9d8e744e1e821c695f9a01e1d5703a09709981ab8c7d0dc6a9c9e907563f0b3"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/service/FormService.java",
+      "lines": 82,
+      "sha256": "71d12eded0c378201faa2e0ca042c9cca18fdf8d3b51152f82ddf07c2dd862bb"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/service/LeadService.java",
+      "lines": 42,
+      "sha256": "b492d96c25ad522a6893425efab14ce196457f696160d17bfd2537e44c1d0962"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/service/UploadService.java",
+      "lines": 39,
+      "sha256": "12605d85ad213eef620c1690ed305c75317ae4c412046439389e5966ff5d36f5"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/storage/LocalMediaStorage.java",
+      "lines": 24,
+      "sha256": "0ae280ce662a2ad5fb4931a8ac9593d13ab3d9eadb8e4b7c996dd2cb28f52d20"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/storage/MediaStorage.java",
+      "lines": 5,
+      "sha256": "32761a54fb2074d8cdb144688973f08115796308316dfeb70020d2c446d80969"
+    },
+    {
+      "path": "src/main/java/br/com/escolhacerta/storage/S3MediaStorage.java",
+      "lines": 30,
+      "sha256": "26a9657dcf394c2118f4baeb851638efe9809716b6333fb6ac474ce579dac718"
+    },
+    {
+      "path": "src/main/resources/application-dev.yml",
+      "lines": 6,
+      "sha256": "90f98e71f0f9933d091d6d68aad9a43bb5d66173d0e70e3703d3c645a0c8c67a"
+    },
+    {
+      "path": "src/main/resources/application-prod.yml",
+      "lines": 15,
+      "sha256": "4fd25edcca915a1cee00e4048aa101dc5b86ad87e740be15090d50e8e85f7a65"
+    },
+    {
+      "path": "src/main/resources/application.yml",
+      "lines": 70,
+      "sha256": "aa8103219ab08395545490d56fb19359272d3b3f34551dbde17b60ec55638888"
+    },
+    {
+      "path": "src/main/resources/db/migration/V1__schema.sql",
+      "lines": 8,
+      "sha256": "e804d4677479df06d5482af82609dadf02e21c0eeced04d614628b07a1c7c424"
+    },
+    {
+      "path": "src/main/resources/db/migration/V2__initial_content.sql",
+      "lines": 12,
+      "sha256": "08c682aa696add3f5d0815c2be8c2c1d32eddcdd2147397111092cf6eccaa0a4"
+    },
+    {
+      "path": "src/main/resources/db/migration/V3__company_whatsapp.sql",
+      "lines": 5,
+      "sha256": "0a9f2a9fb973e38c4d56a7be7b1701f5eac5675dd60ea0343ae9de2f67227c59"
+    },
+    {
+      "path": "src/main/resources/db/migration/V4__remove_childcare_service.sql",
+      "lines": 3,
+      "sha256": "1c6e42107855908d7b5967e54ece3aee3202b03e5c0011af5f647ac213a2d0d8"
+    },
+    {
+      "path": "src/main/resources/static/css/site.css",
+      "lines": 44,
+      "sha256": "129f99b8d20706dd836a96b3ccd9442d425577b7704698c799ff4fcdff96903b"
+    },
+    {
+      "path": "src/main/resources/static/js/site.js",
+      "lines": 18,
+      "sha256": "137cf66483c6701b88980735a3be3e4bd57ed4a8ccfbca7176f3ed7e86704b9b"
+    },
+    {
+      "path": "src/main/resources/templates/about.html",
+      "lines": 1,
+      "sha256": "be10be0f51ffd777811bf71e657caf9355806b090d347c4330dc2ab0cd1f89d7"
+    },
+    {
+      "path": "src/main/resources/templates/admin/account.html",
+      "lines": 1,
+      "sha256": "35e18e310e2b026be03fee4820c7b02a281b2904ed256d1d570a8b7880a3faf5"
+    },
+    {
+      "path": "src/main/resources/templates/admin/content-edit.html",
+      "lines": 1,
+      "sha256": "8ac1724b569f2517ecda385d79236723082336e7bfd02e4ef6a59ec873d0722b"
+    },
+    {
+      "path": "src/main/resources/templates/admin/contents.html",
+      "lines": 1,
+      "sha256": "aa0ef0cb0d38fda7d1552e669956751e72bd2ff3d68504088325a6ce3eb61bcb"
+    },
+    {
+      "path": "src/main/resources/templates/admin/dashboard.html",
+      "lines": 1,
+      "sha256": "f4e0adf8d2a1c49afdd3a78a755b67c873fb18f1f45bec2f7d38944459795181"
+    },
+    {
+      "path": "src/main/resources/templates/admin/form-edit.html",
+      "lines": 1,
+      "sha256": "8b7401eedf89d63eefc9f7d40bcb81aadb03480178b47b8a34d2f994480d6e6b"
+    },
+    {
+      "path": "src/main/resources/templates/admin/forms.html",
+      "lines": 1,
+      "sha256": "c7222ef4c823c2c008abca00f822e45e6684d0d29770f46dab8b45aeff68e039"
+    },
+    {
+      "path": "src/main/resources/templates/admin/lead-detail.html",
+      "lines": 1,
+      "sha256": "2e1a3db891d9f0ea3f42879530dfff20f01c3b1f4bb3fc40cd40c5f0d49ebcdc"
+    },
+    {
+      "path": "src/main/resources/templates/admin/leads.html",
+      "lines": 1,
+      "sha256": "b66cd1d4bed16c89ef64873e50aa8c1b0d68dd43167f0e3b3c5f1c1a8ea10121"
+    },
+    {
+      "path": "src/main/resources/templates/admin/media.html",
+      "lines": 1,
+      "sha256": "d51ba029c1cce41e279d94a442ebd0a70c4f9ab6414bf80fb6c5891b6484a5cf"
+    },
+    {
+      "path": "src/main/resources/templates/admin/settings.html",
+      "lines": 1,
+      "sha256": "309ba6141e0b3f2b349addece34e745afdb3c59bce46f9514455c8f204576bcf"
+    },
+    {
+      "path": "src/main/resources/templates/custom-form.html",
+      "lines": 1,
+      "sha256": "a5c090f3cda7a8d2ec7cbf5f8b42696890c6bfdce01b412bd4d63c7e313daae7"
+    },
+    {
+      "path": "src/main/resources/templates/error/403.html",
+      "lines": 1,
+      "sha256": "5f76cbd67c50551c0d32fb20510ae90de6c02b2b6d21d173488a9dbecea6ee1e"
+    },
+    {
+      "path": "src/main/resources/templates/error/404.html",
+      "lines": 1,
+      "sha256": "c4330aeba35ca23b3295bb4af035d0ce3985e98be075b99027b69331024b7042"
+    },
+    {
+      "path": "src/main/resources/templates/error/429.html",
+      "lines": 1,
+      "sha256": "5d592f35f31118d58ba7e91087805bce3806bd7e967eb4de6857c7f6de893b5e"
+    },
+    {
+      "path": "src/main/resources/templates/error/500.html",
+      "lines": 1,
+      "sha256": "12f4121e92c386f0e4e9790f1ad0b1f54c2c0345348fb8214b0cd2f9fbf502ad"
+    },
+    {
+      "path": "src/main/resources/templates/error.html",
+      "lines": 1,
+      "sha256": "df3fc2a0b0526634f39b839fcc59663238ccd11f73af8a24e4daa0ddac778de8"
+    },
+    {
+      "path": "src/main/resources/templates/fragments/form.html",
+      "lines": 1,
+      "sha256": "c658965a9c257e84f51d3989cfde64663543f7d3a361f5d50b842ce2659054b2"
+    },
+    {
+      "path": "src/main/resources/templates/fragments/layout.html",
+      "lines": 6,
+      "sha256": "aae1a03cf7eea283f0060e60ba5830c3b31dd6dad976c39e2382b0d7998ba2d8"
+    },
+    {
+      "path": "src/main/resources/templates/home.html",
+      "lines": 7,
+      "sha256": "458290a6a43216550833625d7de1d65ddadf74397e67bc0c6bd962bb2c82a472"
+    },
+    {
+      "path": "src/main/resources/templates/lead-form.html",
+      "lines": 1,
+      "sha256": "2c5e557e48d5aa025cff0ff8228faae3133bdd3b0fbdfe64c12f7857773c4991"
+    },
+    {
+      "path": "src/main/resources/templates/listing.html",
+      "lines": 1,
+      "sha256": "1d4e24d2720842b3b4e1ef5bc162332064310762ee295bffb013c4b114aef2e2"
+    },
+    {
+      "path": "src/main/resources/templates/login.html",
+      "lines": 1,
+      "sha256": "7acef54c55bf6c2f06ac172b6ae3bee7465cbb359d037e446c6cbfc6f0e8acc5"
+    },
+    {
+      "path": "src/main/resources/templates/post.html",
+      "lines": 1,
+      "sha256": "60a63ef772d7fb8f6ff6cfd68dacd7471c6a193135f57534de00f5d0c187982b"
+    },
+    {
+      "path": "src/main/resources/templates/privacy.html",
+      "lines": 1,
+      "sha256": "f611ff96db5d0bb8be9fb03adc52c42cb215ed50affec4898f8fbe435b166327"
+    },
+    {
+      "path": "src/test/java/br/com/escolhacerta/ApplicationFlowTest.java",
+      "lines": 140,
+      "sha256": "9ee2df6243fe7e42fb617a80c2b1eb98bc910bbf14b1777a8e26c8424bca4551"
+    },
+    {
+      "path": "src/test/java/br/com/escolhacerta/FormValidationTest.java",
+      "lines": 24,
+      "sha256": "89e63672217bcbefb71d1d0fa764b93ec78d4ba6416fd4967bb4a3261782f22a"
+    },
+    {
+      "path": "src/test/java/br/com/escolhacerta/RateLimitSecurityTest.java",
+      "lines": 28,
+      "sha256": "c5de1e01a65a4b254ceaae9eeb9d5408419de0747cfad1357a7658d28c7efa35"
+    },
+    {
+      "path": "src/test/resources/application-test.yml",
+      "lines": 15,
+      "sha256": "3809b96a52b4c6c4e6b16e0ef8e047420ea93a460745a901134925d7bc182cac"
+    }
+  ],
+  "limitations": [
+    "O projeto entregue não contém .git; git log falhou. Histórico de commits e segredos removidos não puderam ser auditados.",
+    "Não há JAR/bundle compilado ou source maps. Foram examinados todos os assets de frontend entregues: site.js, site.css e 25 templates.",
+    "Maven, Docker e MySQL indisponíveis neste ambiente. Não houve execução da aplicação, suíte JUnit, pentest HTTP ou inspeção do banco em execução.",
+    "Não foram inspecionados .env do computador do usuário, secrets de nuvem, proxy, IAM, buckets ou pipeline externa. Não há CI, Helm ou Terraform no pacote.",
+    "Sem resolução Maven ou varredura CVE das dependências transitivas; esses controles estão fora das cinco categorias solicitadas."
+  ],
+  "test_results": "PASS: tentativa 1 do primeiro IP aceita\nPASS: tentativa 2 do primeiro IP aceita\nPASS: tentativa 3 do primeiro IP aceita\nPASS: tentativa 4 do primeiro IP aceita\nPASS: tentativa 5 do primeiro IP aceita\nPASS: tentativa 6 do primeiro IP aceita\nPASS: tentativa 7 do primeiro IP aceita\nPASS: tentativa 8 do primeiro IP aceita\nPASS: tentativa 9 do primeiro IP aceita\nPASS: tentativa 10 do primeiro IP aceita\nPASS: 11a tentativa do mesmo IP bloqueada\nPASS: outro IP recebe nova quota de login\nPASS: outra instancia recebe quota independente\nPASS: 100 GET /blog passam sem quota no filtro\nPASS: bootstrap aceita 12 letras a repetidas\nPASS: politica da troca aceita sequencia numerica de 12 caracteres com senha atual correta\nLIMITACAO: stubs testam a logica do arquivo real; nao executam Spring, CSRF, HTTP ou banco.\n",
+  "references": [
+    "https://top10.owasp.org/2025/",
+    "https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html",
+    "https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html",
+    "https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html",
+    "https://docs.spring.io/spring-security/reference/servlet/exploits/csrf.html",
+    "https://docs.spring.io/spring/reference/web/webmvc/filters.html"
+  ]
+}

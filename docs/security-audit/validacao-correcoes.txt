@@ -1,0 +1,16 @@
+PASS: senha previsível/fora do limite rejeitada
+PASS: senha previsível/fora do limite rejeitada
+PASS: senha previsível/fora do limite rejeitada
+PASS: senha previsível/fora do limite rejeitada
+PASS: senha previsível/fora do limite rejeitada
+PASS: senha previsível/fora do limite rejeitada
+PASS: passphrase Unicode e fixture de teste aceitas
+PASS: classe real: 40 chamadas concorrentes, duas instâncias, mesma conta normalizada, exatamente 10 aceitas (JDBC stub)
+PASS: nova instância não renova quota
+PASS: janela expirada permite autenticar novamente
+PASS: classe real: GET 121 bloqueado após 120 leituras
+PASS: HEAD não contorna o orçamento de leituras
+PASS: health não bloqueado pela quota de páginas
+PASS: SQL real em SQLite: 60 conexões/tentativas concorrentes, exatamente 10 aceitas.
+LIMITAÇÃO: stubs e SQLite não substituem Spring, MySQL/H2, HTTP ou testes Maven.
+PASS: 25 templates e YAML válidos; V1-V4 intactas; DDL V5/V6 e insert de auditoria verificados em SQLite.

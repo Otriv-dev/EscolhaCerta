@@ -1,0 +1,17 @@
+PASS: tentativa 1 do primeiro IP aceita
+PASS: tentativa 2 do primeiro IP aceita
+PASS: tentativa 3 do primeiro IP aceita
+PASS: tentativa 4 do primeiro IP aceita
+PASS: tentativa 5 do primeiro IP aceita
+PASS: tentativa 6 do primeiro IP aceita
+PASS: tentativa 7 do primeiro IP aceita
+PASS: tentativa 8 do primeiro IP aceita
+PASS: tentativa 9 do primeiro IP aceita
+PASS: tentativa 10 do primeiro IP aceita
+PASS: 11a tentativa do mesmo IP bloqueada
+PASS: outro IP recebe nova quota de login
+PASS: outra instancia recebe quota independente
+PASS: 100 GET /blog passam sem quota no filtro
+PASS: bootstrap aceita 12 letras a repetidas
+PASS: politica da troca aceita sequencia numerica de 12 caracteres com senha atual correta
+LIMITACAO: stubs testam a logica do arquivo real; nao executam Spring, CSRF, HTTP ou banco.

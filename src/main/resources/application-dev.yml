@@ -1,0 +1,6 @@
+spring:
+  thymeleaf:
+    cache: false
+logging:
+  level:
+    br.com.escolhacerta: INFO

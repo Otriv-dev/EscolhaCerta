@@ -1,0 +1,72 @@
+spring:
+  application:
+    name: escolha-certa
+  profiles:
+    default: dev
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/escolhacerta?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${DB_USER:escolhacerta}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
+      hibernate.type.preferred_instant_jdbc_type: TIMESTAMP
+  flyway:
+    enabled: true
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
+  thymeleaf:
+    cache: true
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+  max-http-request-header-size: 8KB
+  tomcat:
+    max-http-form-post-size: 256KB
+    max-swallow-size: 6MB
+    threads:
+      max: 50
+      min-spare: 5
+  error:
+    include-message: never
+    include-stacktrace: never
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        http-only: true
+        same-site: lax
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      group:
+        readiness:
+          include: readinessState,db
+      probes:
+        enabled: true
+app:
+  display:
+    time-zone: ${DISPLAY_TIME_ZONE:America/Sao_Paulo}
+  admin:
+    email: ${ADMIN_EMAIL:}
+    password: ${ADMIN_PASSWORD:}
+  storage:
+    type: ${STORAGE_TYPE:local}
+    local-path: ${UPLOAD_DIR:./uploads/}
+    bucket: ${S3_BUCKET:}
+    region: ${AWS_REGION:us-east-1}
+    endpoint: ${S3_ENDPOINT:}
+    public-base-url: ${S3_PUBLIC_BASE_URL:}

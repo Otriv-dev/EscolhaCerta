@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    url: ${TEST_DB_URL:jdbc:h2:mem:escolhacerta;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE}
+    username: ${TEST_DB_USER:sa}
+    password: ${TEST_DB_PASSWORD:}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+app:
+  admin:
+    email: admin@test.local
+    password: TesteSeguro!2026Validacao
+  storage:
+    type: local
+    local-path: ./target/test-uploads/

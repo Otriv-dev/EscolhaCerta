@@ -1,0 +1,40 @@
+name: escolhacerta
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: escolhacerta
+      MYSQL_USER: ${DB_USER:?Execute o script de inicialização}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Execute o script de inicialização}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Execute o script de inicialização}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysql -uroot -h127.0.0.1 -e 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      DB_URL: jdbc:mysql://mysql:3306/escolhacerta?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      DISPLAY_TIME_ZONE: ${DISPLAY_TIME_ZONE:-America/Sao_Paulo}
+      STORAGE_TYPE: local
+      UPLOAD_DIR: /app/uploads/
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  mysql_data:
+  uploads:
